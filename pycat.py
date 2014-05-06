@@ -349,8 +349,9 @@ class PyCat(SingleServerIRCBot):
                 yield line
 
     def parse_targets(self, line):
- #       if encode(self.channel) not in self.channels:
- #           return [], line
+        #if we arent in any of our allowed channels, there are no targets
+        if len(set(self.channel).intersection(set(self.channels))) == 0:
+            return [], line
 
         allowed_targets = []
         for channel in self.channel:
