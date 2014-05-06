@@ -2,7 +2,7 @@
 # Copyright (c) 2010 Thomas Kongevold Adamcik
 # Released under MIT license, see COPYING file
 
-USAGE = 'Usage: %prog server[:port][,server[:port]] nickname channel [options]'
+USAGE = 'Usage: %prog server[:port][,server[:port]] nickname channel[,channel] [options]'
 
 VERSION = 'pycat - http://github.com/adamcik/pycat'
 
@@ -16,6 +16,8 @@ Examples:
     %prog localhost cat '#pycat' --listen=12345
   Connect to irc.freenode.net, listen on port 8000 on a specific interface:
     %prog irc.freenode.net cat '#pycat' --listen=example.com:8000
+  Connect to irc.freenode.net, connect to multiple channels:
+    %prog irc.freenode.net cat '#pycat,#pycat2'
 '''
 
 import logging
@@ -84,7 +86,7 @@ class PyCat(SingleServerIRCBot):
         SingleServerIRCBot.__init__(self, server_list, nick, real,
                                     reconnection_interval=30)
 
-        self.channel = decode(channel)
+        self.channel = map(decode, channel)
         self.script = map(decode, script or [])
         self.listen_addr = listen_addr
         self.deop = deop
@@ -202,12 +204,12 @@ class PyCat(SingleServerIRCBot):
         logging.debug('%s connected', addr[0])
 
         if self.connection.is_connected():
-            self.dispatchers[conn] = lambda s: self.handle_reciver(s, addr[0])
+            self.dispatchers[conn] = lambda s: self.handle_receiver(s, addr[0])
         else:
             logging.warning('%s disconnected as irc is down', addr[0])
             conn.close()
 
-    def handle_reciver(self, sock, peer):
+    def handle_receiver(self, sock, peer):
         try:
             data = sock.recv(4096)
         except socket.error, e:
@@ -218,7 +220,7 @@ class PyCat(SingleServerIRCBot):
             logging.debug('%s %s', peer, readable(line))
 
             targets, message = self.parse_targets(line)
-            targets = targets or [self.channel]
+            targets = targets or [self.channel[0]]
 
             if not message:
                 continue
@@ -234,8 +236,8 @@ class PyCat(SingleServerIRCBot):
     def handle_stdout(self, sock, target, source):
         data = sock.read(4096)
 
-        if target == self.channel:
-            default = self.channel
+        if target in self.channel:
+            default = target
         else:
             default = source
 
@@ -347,12 +349,14 @@ class PyCat(SingleServerIRCBot):
                 yield line
 
     def parse_targets(self, line):
-        if encode(self.channel) not in self.channels:
-            return [], line
+ #       if encode(self.channel) not in self.channels:
+ #           return [], line
 
-        allowed_targets = self.channels[encode(self.channel)].users()
+        allowed_targets = []
+        for channel in self.channel:
+            allowed_targets += self.channels[encode(channel)].users()
         allowed_targets = map(decode, allowed_targets)
-        allowed_targets.append(self.channel)
+        allowed_targets += self.channel
 
         targets = []
         parts = line.split(' ')
@@ -386,7 +390,8 @@ class PyCat(SingleServerIRCBot):
 
     # Initial events
     def on_welcome(self, conn, event):
-        conn.join(encode(self.channel))
+        for channel in self.channel:
+            conn.join(encode(channel))
 
     def on_nicknameinuse(self, conn, event):
         target = self.target_nick
@@ -405,17 +410,18 @@ class PyCat(SingleServerIRCBot):
     def on_join(self, conn, event):
         nick = conn.get_nickname()
         joiner = get_nick(event.source())
+        target = decode(event.target())
 
         if joiner == nick:
-            logging.info('%s joined %s', decode(nick), self.channel)
-        elif len(self.channels[encode(self.channel)].users()) == 1:
+            logging.info('%s joined %s', decode(nick), target)
+        elif len(self.channels[encode(target)].users()) == 1:
             if not self.opfirst:
                 return
             elif self.deop:
                 mode = '+o-o+v %s %s %s' % (joiner, nick, nick)
             else:
                 mode = '+o %s' % joiner
-            conn.mode(encode(self.channel), mode)
+            conn.mode(encode(target), mode)
 
     # Regular events
     def on_pubmsg(self, conn, event):
@@ -452,7 +458,7 @@ class PyCat(SingleServerIRCBot):
             self.on_pubmsg(conn, event)
 
     def on_mode(self, conn, event):
-        if decode(event.target()) != self.channel:
+        if decode(event.target()) not in self.channel:
             return
 
         if not self.deop:
@@ -463,14 +469,14 @@ class PyCat(SingleServerIRCBot):
 
         if ['+', 'o', nick] in modes:
             logging.info('%s was oped, Voicing and deoping', decode(nick))
-            conn.mode(encode(self.channel), '+v-o %s %s' % (nick, nick))
+            conn.mode(encode(event.target), '+v-o %s %s' % (nick, nick))
 
     def on_invite(self, conn, event):
-        if decode(event.arguments()[0]) == self.channel:
+        if decode(event.arguments()[0]) in self.channel:
             nick = decode(get_nick(event.source()))
             logging.info('Joining %s due to invite from %s',
-                self.channel, nick)
-            conn.join(encode(self.channel))
+                event.arguments()[0], nick)
+            conn.join(encode(event.arguments()[0]))
 
     # Error events
     def on_erroneusnickname(self, conn, event):
@@ -570,10 +576,14 @@ def main():
     logging.basicConfig(level=options.debug or logging.INFO,
         format="[%(asctime)s] %(message)s")
 
-    servers, nickname, channel = args
+    servers, nickname, tmp_channel = args
 
-    if not is_channel(channel):
-        channel = '#' + channel
+    channel = []
+    for chan in tmp_channel.split(','):
+        if not is_channel(chan):
+            channel.append('#' + chan)
+        else:
+            channel.append(chan)
 
     server_list = []
     listen = None
