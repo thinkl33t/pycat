@@ -40,6 +40,8 @@ Usage
         pycat.py localhost cat '#pycat' --listen=12345
       Connect to irc.freenode.net, listen on port 8000 on a specific interface:
         pycat.py irc.freenode.net cat '#pycat' --listen=example.com:8000
+      Connect to irc.freenode.net, connect to multiple channels:
+        pycat.py irc.freenode.net cat '#pycat,#pycat2'
 
 Running
 -------
